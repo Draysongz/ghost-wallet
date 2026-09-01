@@ -54,7 +54,7 @@ under two separate entity categories:
 
 **The deletion test:** if Sibyl Memory is removed, Ghost Wallet can no longer
 distinguish a first-time trade from a repeat of a mistake the user has
-already made. It has no basis to block or modify a transaction — it would
+already made. It has no basis to block or modify a transaction, it would
 approve everything by default. Memory isn't a convenience layer here; it's
 the authorization logic itself.
 
