@@ -1,0 +1,33 @@
+{
+  "name": "ghost-wallet",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "watch": "tsc --watch"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Draysongz/ghost-wallet.git"
+  },
+  "keywords": [],
+  "author": "Ackermann",
+  "license": "MIT",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Draysongz/ghost-wallet/issues"
+  },
+  "homepage": "https://github.com/Draysongz/ghost-wallet#readme",
+  "dependencies": {
+    "chalk": "^6.0.0",
+    "cli-table3": "^0.6.5",
+    "commander": "^15.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "typescript": "^7.0.2"
+  }
+}
