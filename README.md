@@ -102,18 +102,9 @@ isn't publicly verifiable.
 
 ## Prior work declaration
 
-This project's Sibyl Memory bridge pattern (a small Python helper script
-called from a Node/TypeScript CLI via subprocess, since Sibyl Memory's
-client library is Python-only) was first built and tested in a pre-hackathon
-practice project called **Patrn** (a CLI for storing/recalling reusable code
-snippets), built publicly on Twitter in the days before this hackathon's
-build window opened. The bridge *pattern* is reused and adapted here; Ghost
-Wallet's actual memory schema, decision logic, Base integration, and ACP
-integration are new work built during the Sep 1–10 window.
+This project does not reuse code from any pre-hackathon project, including Patrn (a CLI for storing/recalling reusable code snippets, built publicly on Twitter in the days before this hackathon's build window opened). All code in this repository including the Sibyl Memory bridge script, memory schema, decision logic, Base integration, and ACP integration was written fresh during the Sep 1–10 build window.
 
-Comparable existing products: *research not yet finalized — will only name
-specific products here once verified to actually exist and confirmed to not
-already do what Ghost Wallet does.*
+Comparable existing products: research not yet finalized — will only name specific products here once verified to actually exist and confirmed to not already do what Ghost Wallet does.
 
 ## Tech stack
 
