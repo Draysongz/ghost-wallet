@@ -16,7 +16,7 @@
   "keywords": [],
   "author": "Ackermann",
   "license": "MIT",
-  "type": "commonjs",
+  "type": "module",
   "bugs": {
     "url": "https://github.com/Draysongz/ghost-wallet/issues"
   },
@@ -24,7 +24,12 @@
   "dependencies": {
     "chalk": "^6.0.0",
     "cli-table3": "^0.6.5",
-    "commander": "^15.0.0"
+    "commander": "^15.0.0",
+    "dotenv": "^17.4.2",
+    "mongoose": "^9.9.4",
+    "telegraf": "^4.16.3",
+    "thirdweb": "^5.121.1",
+    "viem": "^2.56.3"
   },
   "devDependencies": {
     "@types/node": "^26.4.0",
