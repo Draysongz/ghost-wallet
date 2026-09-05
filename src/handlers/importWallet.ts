@@ -3,6 +3,7 @@ import { createGhostSmartAccount, importOwnerWallet } from "../base/wallet.js";
 import {
   getWalletByTelegramId,
   saveWallet,
+  sendMainMenu,
 } from "../lib/helpers.js";
 import type { GhostContext } from "../types/context.js";
 
@@ -94,6 +95,8 @@ export const importWalletScene = new Scenes.WizardScene<GhostContext>(
           parse_mode: "HTML",
         },
       );
+
+      await sendMainMenu(ctx);
 
       return ctx.scene.leave();
     } catch (error) {

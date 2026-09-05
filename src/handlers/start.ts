@@ -44,8 +44,8 @@ const MAIN_MENU_KEYBOARD = {
         callback_data: "set_rule",
       },
       {
-        text: "📉 Log a Trade",
-        callback_data: "log_trade",
+        text: "📈 Positions",
+        callback_data: "view_positions",
       },
     ],
     [

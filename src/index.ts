@@ -7,6 +7,10 @@ import { registerCreateWalletHandler } from "./handlers/createWallet.js";
 import { importWalletScene } from "./handlers/importWallet.js";
 import {type  GhostContext } from "./types/context.js";
 import { setRuleScene } from "./handlers/setRule.js";
+import { registerRuleListHandler } from "./handlers/listRule.js";
+import { editRuleScene } from "./handlers/editRule.js";
+import { registerProposeTradeHandlers } from "./handlers/trade.js";
+import { registerPositionsHandler } from "./handlers/position.js";
 
 
 configDotenv()
@@ -19,7 +23,8 @@ const bot = new Telegraf<GhostContext>(BOT_TOKEN);
 
 const stage = new Scenes.Stage([
     importWalletScene,
-    setRuleScene
+    setRuleScene,
+    editRuleScene
 ]);
 
 bot.use(session());
@@ -33,7 +38,8 @@ bot.use(stage.middleware());
 
 registerStartHandler(bot);
 registerCreateWalletHandler(bot)
-
+registerRuleListHandler(bot)
+registerProposeTradeHandlers(bot)
 
 
 
@@ -48,5 +54,7 @@ bot.action("set_rule", async (ctx) => {
 
   await ctx.scene.enter("set-rule");
 });
+
+
 
 bot.launch();

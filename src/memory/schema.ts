@@ -13,11 +13,11 @@
 // ---------------------------------------------------------------------
 
 export type RuleType =
-  | "max_exposure_pct"      // e.g. "never exceed 20% in a given category"
-  | "avoid_category"        // e.g. "avoid low-liquidity meme tokens"
-  | "max_position_size"     // e.g. "never put more than $X in one trade"
-  | "cooldown_after_loss"   // e.g. "wait 24h before trading after a loss"
-  | string;                 // escape hatch: allow new rule types without a schema change
+  | "max_exposure_pct" // e.g. "never exceed 20% in a given category"
+  | "avoid_category" // e.g. "avoid low-liquidity meme tokens"
+  | "max_position_size" // e.g. "never put more than $X in one trade"
+  | "cooldown_after_loss" // e.g. "wait 24h before trading after a loss"
+  | string; // escape hatch: allow new rule types without a schema change
 
 export interface RiskRule {
   rule_type: RuleType;
@@ -42,15 +42,21 @@ export interface RiskRule {
 
 export interface TradeLesson {
   asset: string;               // token symbol/name
-  // tags used to MATCH this lesson against a future proposed trade 
-  // this is what makes recall generalize instead of only firing on the
-  // exact same token again
+  
   category_tags: string[];     // e.g. ["meme", "low-liquidity"]
   position_size_usd: number;
-  outcome_pct: number;         // e.g. -68 for a 68% loss, positive for a win
-  // the actual takeaway, in plain language -- this is what gets shown to
-  // the user when a future trade triggers a block
+  
+  outcome_pct: number | null;
+
   lesson: string;
+  status: "open" | "resolved";
+  // needed to look up the current price later and compute a real outcome
+  coingecko_id?: string;
+  entry_price_usd?: number;
+  // true if this trade violated a rule/lesson and the user explicitly
+  // overrode Ghost's recommendation to proceed anyway
+  was_override?: boolean;
+  override_reason?: string;
   created_at?: string;
 }
 
@@ -72,7 +78,14 @@ export interface SibylEntity<T> {
 
 export interface SibylBridgeResult<T = RiskRule | TradeLesson> {
   ok: boolean;
-  action: "store_rule" | "store_lesson" | "list_rules" | "list_lessons" | "evaluate";
+  action:
+    | "store_rule"
+    | "edit_rule"
+    | "delete_rule"
+    | "store_lesson"
+    | "list_rules"
+    | "list_lessons"
+    | "evaluate";
   entity?: SibylEntity<T>;
   entities?: SibylEntity<T>[];
   error?: string;

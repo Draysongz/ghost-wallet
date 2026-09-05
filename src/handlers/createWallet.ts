@@ -2,6 +2,7 @@ import { createGhostWallet } from "../base/wallet.js";
 import {
   getWalletByTelegramId,
   saveWallet,
+  sendMainMenu,
 } from "../lib/helpers.js";
 
 export function registerCreateWalletHandler(bot: any) {
@@ -64,6 +65,9 @@ export function registerCreateWalletHandler(bot: any) {
           ctx.chat.id,
           privateKeyMessage.message_id,
         );
+
+
+        await sendMainMenu(ctx)
       } catch (error) {
         console.error(
           "Failed to delete private key message:",

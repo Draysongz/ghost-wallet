@@ -56,6 +56,7 @@ export async function evaluate(tenantId: string, trade: ProposedTrade): Promise<
     if (!ruleApplies(rule, trade)) continue;
 
     if (rule.rule_type === "avoid_category") {
+      // hard rule -- no partial size makes this okay, it's a full block
       hardBlock = true;
       triggeredBy.push(rule);
       reasons.push(
@@ -80,7 +81,7 @@ export async function evaluate(tenantId: string, trade: ProposedTrade): Promise<
         );
 
         if (maxAdditionalUsd <= 0) {
-          
+          // already at or over the limit before this trade -- no size fits
           hardBlock = true;
         } else {
           tightestAllowedSize =
@@ -104,12 +105,21 @@ export async function evaluate(tenantId: string, trade: ProposedTrade): Promise<
       }
     }
 
-
+    // NOTE: cooldown_after_loss is not implemented yet -- it needs a
+    // "time since last loss" check this function doesn't currently have
+    // access to. Left out of the MVP; add later if there's time.
   }
 
   // --- check trade lessons (pattern match, not a hard limit) ---
+  // NOTE: lessons with outcome_pct === null are still "open" (pending
+  // resolution) -- they haven't happened yet as far as memory is
+  // concerned, so they can't be cited as a past mistake. The type guard
+  // below (`lesson is TradeLesson & { outcome_pct: number }`) tells
+  // TypeScript outcome_pct is definitely a number from here on, not just
+  // filtered at runtime.
   const matchingLessons = lessons.filter(
-    (lesson) =>
+    (lesson): lesson is TradeLesson & { outcome_pct: number } =>
+      lesson.outcome_pct !== null &&
       tagsOverlap(lesson.category_tags, trade.category_tags) &&
       lesson.outcome_pct <= BAD_OUTCOME_THRESHOLD_PCT
   );
@@ -121,13 +131,14 @@ export async function evaluate(tenantId: string, trade: ProposedTrade): Promise<
         `You lost ${Math.abs(lesson.outcome_pct)}% on ${lesson.asset}, a similar trade: "${lesson.lesson}"`
       );
     }
- 
+    // a lesson alone (no rule violation) doesn't hard-block -- it suggests
+    // caution, so if nothing else already capped the size, suggest half
     if (tightestAllowedSize === undefined) {
       tightestAllowedSize = trade.position_size_usd / 2;
     }
   }
 
-  
+  // --- combine into a final decision ---
   if (hardBlock) {
     return {
       decision: "block",
