@@ -4,11 +4,12 @@ ghost_memory.py
 
 Bridge between Ghost Wallet (Node/TS) and Sibyl Memory (Python library).
 
-Six commands:
+Seven commands:
   store-rule    -- save a risk rule the user has stated (create OR update)
   edit-rule     -- update fields on a risk rule that must already exist
   delete-rule   -- delete a risk rule by (rule_type, applies_to)
   store-lesson  -- save a record of what happened on a past trade
+  update-lesson -- resolve/update a trade lesson that must already exist
   list-rules    -- list all stored risk rules for a tenant
   list-lessons  -- list all stored trade lessons for a tenant
 
@@ -54,6 +55,16 @@ Usage examples (run these yourself in a terminal to test):
       --entry_price_usd 0.0000012 \
       --was_override \
       --override_reason "Momentum looked strong"
+
+  # Resolving that open lesson later, once the position is closed.
+  # --name comes from list-lessons; reusing it updates in place rather
+  # than stacking a duplicate:
+  python3 ghost_memory.py update-lesson \
+      --tenant_id 0xUSERWALLET \
+      --name "PEPE__20260910T122909063663__3cf53831" \
+      --outcome_pct -42 \
+      --status resolved \
+      --lesson "Overrode a 20% exposure block and closed down 42%"
 
   python3 ghost_memory.py list-rules --tenant_id 0xUSERWALLET
   python3 ghost_memory.py list-lessons --tenant_id 0xUSERWALLET
@@ -186,6 +197,46 @@ def cmd_store_lesson(args: argparse.Namespace) -> None:
     print(json.dumps({"ok": True, "action": "store_lesson", "entity": result}))
 
 
+def cmd_update_lesson(args: argparse.Namespace) -> None:
+    client = get_client(args.tenant_id, args.db_path)
+
+    try:
+        existing = client.get_entity(CATEGORY_LESSONS, args.name)
+    except NotFoundError:
+        print(json.dumps({
+            "ok": False,
+            "action": "update_lesson",
+            "error": f"No lesson found with name='{args.name}'",
+        }))
+        sys.exit(1)
+
+    # A lesson may only move to "resolved" with a real outcome attached.
+    # evaluate.ts skips null-outcome lessons, so resolving without one
+    # would produce a lesson that is neither open nor ever citable.
+    if args.status == "resolved" and args.outcome_pct is None:
+        print(json.dumps({
+            "ok": False,
+            "action": "update_lesson",
+            "error": "Cannot resolve a lesson without --outcome_pct",
+        }))
+        sys.exit(1)
+
+    body = dict(existing["body"])
+    if args.outcome_pct is not None:
+        body["outcome_pct"] = args.outcome_pct
+    if args.lesson is not None:
+        body["lesson"] = args.lesson
+    body["status"] = args.status
+    body["created_at"] = existing["body"].get("created_at", _now_iso())
+    body["updated_at"] = _now_iso()
+
+    # Same name as the existing entity, so this overwrites in place rather
+    # than stacking a second row. Duplicating would double-count the
+    # position in balance.ts's category-exposure sum.
+    result = client.set_entity(CATEGORY_LESSONS, args.name, body)
+    print(json.dumps({"ok": True, "action": "update_lesson", "entity": result}))
+
+
 def cmd_list_rules(args: argparse.Namespace) -> None:
     client = get_client(args.tenant_id, args.db_path)
     entities = client.list_entities(category=CATEGORY_RULES)
@@ -282,6 +333,34 @@ def main() -> None:
     )
     store_lesson_parser.add_argument("--override_reason", required=False, default=None)
     store_lesson_parser.set_defaults(func=cmd_store_lesson)
+
+    update_lesson_parser = subparsers.add_parser(
+        "update-lesson", help="Resolve/update a trade lesson that must already exist"
+    )
+    _add_common_args(update_lesson_parser)
+    update_lesson_parser.add_argument(
+        "--name",
+        required=True,
+        help="The lesson's unique entity name, as returned by list-lessons",
+    )
+    update_lesson_parser.add_argument(
+        "--outcome_pct",
+        required=False,
+        type=float,
+        default=None,
+        help="e.g. -42 for a 42%% loss. Required when --status is 'resolved'.",
+    )
+    update_lesson_parser.add_argument(
+        "--status",
+        required=False,
+        choices=VALID_LESSON_STATUSES,
+        default="resolved",
+        help="Defaults to 'resolved' -- the usual reason to update a lesson",
+    )
+    update_lesson_parser.add_argument(
+        "--lesson", required=False, default=None, help="Replace the plain-language takeaway"
+    )
+    update_lesson_parser.set_defaults(func=cmd_update_lesson)
 
     list_rules_parser = subparsers.add_parser("list-rules", help="List all stored risk rules")
     _add_common_args(list_rules_parser)

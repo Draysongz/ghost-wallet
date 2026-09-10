@@ -3,3 +3,6 @@ dist
 *.env
 .env
 .sibyl-memory/
+handoff.md
+.claude
+.remember
