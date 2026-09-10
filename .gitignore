@@ -5,4 +5,5 @@ dist
 .sibyl-memory/
 handoff.md
 .claude
-.remember.DS_Store
+.remember
+.DS_Store
