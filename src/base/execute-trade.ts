@@ -81,7 +81,7 @@ const AERODROME_ROUTER_ABI = [
     outputs: [{ name: "amounts", type: "uint256[]" }],
   },
 ] as const;
-
+ 
 const ERC20_ABI = [
   {
     name: "balanceOf",
@@ -181,7 +181,27 @@ async function ensureApproval(
   spender: Address,
   amount: bigint,
 ) {
-  // ...unchanged
+  const currentAllowance = (await publicClient.readContract({
+    address: token,
+    abi: ERC20_ABI,
+    functionName: "allowance",
+    args: [owner, spender],
+  })) as bigint;
+
+  if (currentAllowance >= amount) return;
+
+  const hash = await walletClient.writeContract({
+    address: token,
+    abi: ERC20_ABI,
+    functionName: "approve",
+    args: [spender, amount],
+  });
+
+  const receipt = await publicClient.waitForTransactionReceipt({ hash });
+
+  if (receipt.status !== "success") {
+    throw new Error(`ERC-20 approve reverted for ${token} -> ${spender} (tx ${hash})`);
+  }
 }
 
 export async function executeSwap(params: ExecuteSwapParams): Promise<ExecuteSwapResult> {
