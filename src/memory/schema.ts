@@ -53,6 +53,11 @@ export interface TradeLesson {
   // needed to look up the current price later and compute a real outcome
   coingecko_id?: string;
   entry_price_usd?: number;
+  // the exact contract that was swapped into. Persisted rather than
+  // re-derived from the symbol at close time, because resolveAsset()
+  // accepts a raw address too -- symbol -> address is not injective, and
+  // meme tokens routinely reuse symbols across deployments.
+  token_address?: string;
   // true if this trade violated a rule/lesson and the user explicitly
   // overrode Ghost's recommendation to proceed anyway
   was_override?: boolean;
@@ -83,6 +88,7 @@ export interface SibylBridgeResult<T = RiskRule | TradeLesson> {
     | "edit_rule"
     | "delete_rule"
     | "store_lesson"
+    | "update_lesson"
     | "list_rules"
     | "list_lessons"
     | "evaluate";

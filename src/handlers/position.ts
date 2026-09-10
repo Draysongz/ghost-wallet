@@ -1,8 +1,8 @@
 import { Markup } from "telegraf";
 import { getMarketSnapshot, type MarketSnapshot } from "../base/pricing.js";
-import { listLessons } from "../memory/client.js";
+import { listLessons, resolveLesson } from "../memory/client.js";
 import { getWalletByTelegramId } from "../lib/helpers.js";
-import { createForkClients } from "../base/execute-trade.js"; // exposes account/publicClient for balance read
+import { createForkClients, executeSell, getTokenPosition } from "../base/execute-trade.js";
 import type { TradeLesson, SibylEntity } from "../memory/schema.js";
 import { formatEther } from "viem";
 
@@ -157,6 +157,16 @@ async function renderPositionsDashboard(ctx: any) {
   }
 }
 
+function buildClosedLessonText(lesson: TradeLesson, pnlPct: number): string {
+  const direction = pnlPct >= 0 ? "up" : "down";
+  const magnitude = Math.abs(pnlPct).toFixed(1);
+
+  if (lesson.was_override && lesson.override_reason) {
+    return `Closed ${direction} ${magnitude}% after overriding Ghost's block ("${lesson.override_reason}")`;
+  }
+  return `Closed ${direction} ${magnitude}%`;
+}
+
 export function registerPositionsHandler(bot: any) {
   bot.action("view_positions", async (ctx: any) => {
     try {
@@ -179,9 +189,94 @@ export function registerPositionsHandler(bot: any) {
   });
 
   bot.action(/^close_position:(.+)$/, async (ctx: any) => {
-    await ctx.answerCbQuery();
-    await ctx.editMessageText(
-      "⚠️ Closing positions still needs the sell-swap function confirmed (see earlier note) — not wired up yet.",
-    );
+    const lessonName = ctx.match[1];
+
+    try {
+      await ctx.answerCbQuery();
+
+      const user = await getWalletByTelegramId(ctx.from!.id);
+      if (!user) {
+        await ctx.reply("👻 You don't have a Ghost Wallet yet.\n\nUse /start to create or import one.");
+        return;
+      }
+
+      const stored = await listLessons(user.wallet_address);
+      const entity = stored.entities?.find((e) => e.name === lessonName);
+
+      if (!entity || entity.body.status !== "open") {
+        await ctx.editMessageText("That position isn't open anymore.");
+        return;
+      }
+
+      const lesson = entity.body;
+
+      if (!lesson.token_address) {
+        await ctx.editMessageText(
+          `⚠️ This ${lesson.asset} position was opened before Ghost started recording contract addresses, so it can't be sold automatically. Positions opened from now on will close normally.`,
+        );
+        return;
+      }
+
+      await ctx.editMessageText(`Closing ${lesson.asset}…`);
+
+      const { raw } = await getTokenPosition(
+        ANVIL_TEST_PRIVATE_KEY,
+        lesson.token_address as `0x${string}`,
+      );
+
+      if (raw <= 0n) {
+        await ctx.editMessageText(
+          `⚠️ The wallet holds no ${lesson.asset} on the fork, so there's nothing to sell.`,
+        );
+        return;
+      }
+
+      const ethPrice = (await getMarketSnapshot(["ethereum"])).get("ethereum")?.price_usd ?? 0;
+      // Without a real ETH price the proceeds would compute to $0 and a
+      // fabricated -100% outcome would be written into memory permanently.
+      if (ethPrice <= 0) {
+        await ctx.editMessageText(
+          "❌ Couldn't get an ETH price to value the proceeds, so the position wasn't closed. Try again shortly.",
+        );
+        return;
+      }
+
+      const sell = await executeSell({
+        privateKey: ANVIL_TEST_PRIVATE_KEY,
+        tokenInAddress: lesson.token_address as `0x${string}`,
+        tokenAmountRaw: raw,
+      });
+
+      const proceedsUsd = Number(formatEther(sell.ethReceivedWei)) * ethPrice;
+      const pnlUsd = proceedsUsd - lesson.position_size_usd;
+      const pnlPct = (pnlUsd / lesson.position_size_usd) * 100;
+
+      await resolveLesson(user.wallet_address, {
+        name: lessonName,
+        outcome_pct: Number(pnlPct.toFixed(2)),
+        status: "resolved",
+        lesson: buildClosedLessonText(lesson, pnlPct),
+      });
+
+      const sign = pnlPct >= 0 ? "+" : "";
+
+      await ctx.editMessageText(
+        `${pnlPct >= 0 ? "🟢" : "🔴"} <b>Closed ${lesson.asset}</b>\n\n` +
+          `Realized: ${sign}${pnlPct.toFixed(2)}%  /  ${sign}$${pnlUsd.toFixed(2)}\n` +
+          `Proceeds: $${proceedsUsd.toFixed(2)} (entry $${lesson.position_size_usd.toFixed(2)})\n\n` +
+          `Tx: <code>${sell.txHash}</code>\n\n` +
+          `Ghost recorded this outcome. It will cite this trade when you propose a similar one.`,
+        {
+          parse_mode: "HTML",
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback("📊 Positions", "view_positions")],
+            [Markup.button.callback("🔙 Back", "back")],
+          ]),
+        },
+      );
+    } catch (error: any) {
+      console.error("Failed to close position:", error);
+      await ctx.reply(`❌ Couldn't close that position:\n\n${error.message || "Unknown error"}`);
+    }
   });
 }

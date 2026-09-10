@@ -234,6 +234,7 @@ async function logExecutedTrade(
     status: "open",
     coingecko_id: asset.coingecko_id,
     entry_price_usd: asset.price_usd,
+    token_address: asset.contract_address,
     was_override: opts.wasOverride,
     ...(opts.overrideReason !== undefined && {
       override_reason: opts.overrideReason,
@@ -245,7 +246,7 @@ async function logExecutedTrade(
   await ctx.reply(
     `✅ Trade executed on-chain (fork) at $${opts.sizeUsd}${opts.wasOverride ? " (override recorded)" : ""}.\n\n` +
       `Tx: <code>${txHash}</code>\n\n` +
-      `Position opened in memory. Outcome will resolve automatically via price monitoring.`,
+      `Position opened in memory. Close it from the Positions screen to sell on-chain and record the realized outcome.`,
     { parse_mode: "HTML" },
   );
   await sendMainMenu(ctx);

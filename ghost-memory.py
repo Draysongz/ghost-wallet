@@ -188,6 +188,7 @@ def cmd_store_lesson(args: argparse.Namespace) -> None:
         "status": args.status,
         "coingecko_id": args.coingecko_id,
         "entry_price_usd": args.entry_price_usd,
+        "token_address": args.token_address,
         "was_override": args.was_override,
         "override_reason": args.override_reason or "",
         "created_at": _now_iso(),
@@ -325,6 +326,12 @@ def main() -> None:
         "--coingecko_id", required=False, default=None, help="Needed to look up current price later, for open lessons"
     )
     store_lesson_parser.add_argument("--entry_price_usd", required=False, type=float, default=None)
+    store_lesson_parser.add_argument(
+        "--token_address",
+        required=False,
+        default=None,
+        help="Contract address actually swapped into -- needed to sell the exact same token on close",
+    )
     store_lesson_parser.add_argument(
         "--was_override",
         action="store_true",

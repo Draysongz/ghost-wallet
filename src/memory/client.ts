@@ -190,6 +190,9 @@ export const storeLesson = async (tenantId: string, lesson: TradeLesson) => {
         if (lesson.entry_price_usd !== undefined) {
             args.push("--entry_price_usd", lesson.entry_price_usd.toString());
         }
+        if (lesson.token_address) {
+            args.push("--token_address", lesson.token_address);
+        }
         if (lesson.was_override) {
             args.push("--was_override"); // store_true flag on the Python side, no value needed
         }
@@ -204,6 +207,55 @@ export const storeLesson = async (tenantId: string, lesson: TradeLesson) => {
         throw error;
     }
 }
+
+/**
+ * Resolve (or otherwise update) a trade lesson that must already exist.
+ *
+ * `name` is the lesson's unique entity name from listLessons -- lessons are
+ * named per-event (asset__timestamp__uuid), not per-asset, so there is no
+ * way to reconstruct it. Reusing the exact name is what makes this an
+ * in-place update; storing again would stack a duplicate row and
+ * double-count the position in balance.ts's exposure sum.
+ */
+export const resolveLesson = async (
+  tenantId: string,
+  update: {
+    name: string;
+    outcome_pct?: number;
+    status?: TradeLesson["status"];
+    lesson?: string;
+  },
+) => {
+  try {
+    const args = [
+      pyPath,
+      "update-lesson",
+      "--tenant_id",
+      tenantId,
+      "--name",
+      update.name,
+    ];
+
+    if (update.outcome_pct !== undefined) {
+      args.push("--outcome_pct", update.outcome_pct.toString());
+    }
+
+    if (update.status !== undefined) {
+      args.push("--status", update.status);
+    }
+
+    if (update.lesson !== undefined) {
+      args.push("--lesson", update.lesson);
+    }
+
+    const { stdout } = await execFileAsync("python3", args);
+
+    return JSON.parse(stdout) as SibylBridgeResult<TradeLesson>;
+  } catch (error) {
+    console.error("Error occurred while resolving lesson:", error);
+    throw error;
+  }
+};
 
 export const listLessons = async (
   tenantId: string,
