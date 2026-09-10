@@ -1,40 +1,12 @@
 import { Markup } from "telegraf";
-import { getCurrentPrice } from "../base/pricing.js"; // adjust path to your actual file
+import { getMarketSnapshot, type MarketSnapshot } from "../base/pricing.js";
+import { listLessons } from "../memory/client.js";
+import { getWalletByTelegramId } from "../lib/helpers.js";
+import { createForkClients } from "../base/execute-trade.js"; // exposes account/publicClient for balance read
+import type { TradeLesson, SibylEntity } from "../memory/schema.js";
+import { formatEther } from "viem";
 
-
-interface MockPosition {
-  id: string;
-  asset: string;
-  coingecko_id: string;
-  entry_price_usd: number;
-  position_size_usd: number;
-  opened_at: string;
-}
-
-const MOCK_POSITIONS: MockPosition[] = [
-  {
-    id: "pos_1",
-    asset: "PEPE",
-    coingecko_id: "pepe",
-    entry_price_usd: 0.0000012,
-    position_size_usd: 500,
-    opened_at: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
-  },
-  {
-    id: "pos_2",
-    asset: "ETH",
-    coingecko_id: "ethereum",
-    entry_price_usd: 2450,
-    position_size_usd: 1000,
-    opened_at: new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString(),
-  },
-];
-
-async function fetchMockPositions(): Promise<MockPosition[]> {
-  // Pretend this is async, like a real DB/memory call would be.
-  return MOCK_POSITIONS;
-}
-// ----------------------------------------------------------------------
+const ANVIL_TEST_PRIVATE_KEY = process.env.ANVIL_TEST_PRIVATE_KEY as `0x${string}`;
 
 function formatElapsed(isoTimestamp: string): string {
   const ms = Date.now() - new Date(isoTimestamp).getTime();
@@ -44,87 +16,131 @@ function formatElapsed(isoTimestamp: string): string {
   return `${(hours / 24).toFixed(1)}d ago`;
 }
 
-interface PositionWithPnl extends MockPosition {
-  current_price_usd: number;
+function formatPct(pct: number | null): string {
+  if (pct === null) return "n/a";
+  const sign = pct >= 0 ? "+" : "";
+  return `${sign}${pct.toFixed(2)}%`;
+}
+
+interface PositionWithMarket {
+  name: string;
+  asset: string;
+  entry_price_usd: number;
+  position_size_usd: number;
+  opened_at: string;
+  market: MarketSnapshot;
   pnl_pct: number;
   pnl_usd: number;
 }
 
-async function attachLivePnl(positions: MockPosition[]): Promise<PositionWithPnl[]> {
-  const results: PositionWithPnl[] = [];
+async function fetchOpenPositions(tenantId: string): Promise<SibylEntity<TradeLesson>[]> {
+  const result = await listLessons(tenantId);
+  if (!result.ok || !result.entities) return [];
+  return result.entities.filter((e) => e.body.status === "open");
+}
 
-  for (const pos of positions) {
-    try {
-      const currentPrice = await getCurrentPrice(pos.coingecko_id);
-      const pnlPct = ((currentPrice - pos.entry_price_usd) / pos.entry_price_usd) * 100;
-      const pnlUsd = (pos.position_size_usd * pnlPct) / 100;
+async function attachMarketData(entities: SibylEntity<TradeLesson>[]): Promise<PositionWithMarket[]> {
+  const validEntities = entities.filter(
+    (e) => e.body.coingecko_id && e.body.entry_price_usd !== undefined,
+  );
 
-      results.push({
-        ...pos,
-        current_price_usd: currentPrice,
-        pnl_pct: pnlPct,
-        pnl_usd: pnlUsd,
-      });
-    } catch (error) {
-      console.error(`Failed to price position ${pos.id} (${pos.coingecko_id}):`, error);
-      // Skip positions we can't price rather than crashing the whole
-      // dashboard over one bad lookup.
+  if (validEntities.length === 0) return [];
+
+  const ids = validEntities.map((e) => e.body.coingecko_id!);
+  const snapshots = await getMarketSnapshot(ids);
+
+  const results: PositionWithMarket[] = [];
+
+  for (const entity of validEntities) {
+    const lesson = entity.body;
+    const market = snapshots.get(lesson.coingecko_id!);
+
+    if (!market) {
+      console.error(`No market data returned for ${lesson.coingecko_id} (lesson ${entity.name})`);
+      continue;
     }
+
+    const pnlPct = ((market.price_usd - lesson.entry_price_usd!) / lesson.entry_price_usd!) * 100;
+    const pnlUsd = (lesson.position_size_usd * pnlPct) / 100;
+
+    results.push({
+      name: entity.name,
+      asset: lesson.asset,
+      entry_price_usd: lesson.entry_price_usd!,
+      position_size_usd: lesson.position_size_usd,
+      opened_at: entity.created_at,
+      market,
+      pnl_pct: pnlPct,
+      pnl_usd: pnlUsd,
+    });
   }
 
   return results;
 }
 
-function formatPositionCard(pos: PositionWithPnl): string {
-  const arrow = pos.pnl_pct >= 0 ? "🟢" : "🔴";
-  const sign = pos.pnl_pct >= 0 ? "+" : "";
+async function getWalletEthBalance(privateKey: `0x${string}`): Promise<{ eth: number; usd: number; ethPriceUsd: number }> {
+  const { publicClient, account } = createForkClients(privateKey);
+  const balanceWei = await publicClient.getBalance({ address: account.address });
+  const ethBalance = Number(formatEther(balanceWei));
 
-  return (
-    `${arrow} <b>${pos.asset}</b>\n` +
-    `Size: <b>$${pos.position_size_usd}</b>  ·  Opened ${formatElapsed(pos.opened_at)}\n` +
-    `Entry: <b>$${pos.entry_price_usd}</b>  →  Now: <b>$${pos.current_price_usd}</b>\n` +
-    `P&L: <b>${sign}${pos.pnl_pct.toFixed(1)}%</b> (${sign}$${pos.pnl_usd.toFixed(2)})`
-  );
+  const snapshot = await getMarketSnapshot(["ethereum"]);
+  const ethPrice = snapshot.get("ethereum")?.price_usd ?? 0;
+
+  return { eth: ethBalance, usd: ethBalance * ethPrice, ethPriceUsd: ethPrice };
 }
 
-function positionButtons(pos: PositionWithPnl) {
-  return [
-    Markup.button.callback(`❌ Close ${pos.asset}`, `close_position:${pos.id}`),
-  ];
+function formatPositionsOverview(positions: PositionWithMarket[]): string {
+  if (positions.length === 0) {
+    return `<b>Positions Overview:</b>\n\nNo open positions right now.`;
+  }
+
+  let message = `<b>Positions Overview:</b>\n\n`;
+
+  positions.forEach((pos, i) => {
+    const arrow = pos.pnl_pct >= 0 ? "🟢" : "🔴";
+    const sign = pos.pnl_pct >= 0 ? "+" : "";
+    const currentValue = pos.position_size_usd * (1 + pos.pnl_pct / 100);
+
+    message +=
+      `${arrow} /${i + 1} <b>${pos.asset}</b>\n` +
+      `Profit: ${sign}${pos.pnl_pct.toFixed(2)}% / ${sign}$${pos.pnl_usd.toFixed(2)}\n` +
+      `Value: $${currentValue.toFixed(2)} (entry $${pos.position_size_usd.toFixed(2)})\n` +
+      `Mcap: $${pos.market.market_cap_usd.toLocaleString()}  @  $${pos.market.price_usd}\n` +
+      `1h: ${formatPct(pos.market.price_change_pct_1h)}  ·  24h: ${formatPct(pos.market.price_change_pct_24h)}\n` +
+      `Opened: ${formatElapsed(pos.opened_at)}\n\n`;
+  });
+
+  const totalValue = positions.reduce((sum, p) => sum + p.position_size_usd * (1 + p.pnl_pct / 100), 0);
+  const totalPnl = positions.reduce((sum, p) => sum + p.pnl_usd, 0);
+
+  message += `━━━━━━━━━━━━━━━━━━\n` + `Total Value: $${totalValue.toFixed(2)} (${totalPnl >= 0 ? "+" : ""}$${totalPnl.toFixed(2)})`;
+
+  return message;
 }
 
 async function renderPositionsDashboard(ctx: any) {
-  const positions = await fetchMockPositions();
-
-  if (positions.length === 0) {
-    const payload = {
-      parse_mode: "HTML" as const,
-      ...Markup.inlineKeyboard([
-        [Markup.button.callback("🔄 Refresh", "positions_refresh")],
-        [Markup.button.callback("🔙 Back", "back")],
-      ]),
-    };
-    const text = `📈 <b>Open Positions</b>\n\nNo open positions right now.`;
-
-    if (ctx.updateType === "callback_query") {
-      await ctx.editMessageText(text, payload);
-    } else {
-      await ctx.reply(text, payload);
-    }
+  const user = await getWalletByTelegramId(ctx.from!.id);
+  if (!user) {
+    await ctx.reply("👻 You don't have a Ghost Wallet yet.\n\nUse /start to create or import one.");
     return;
   }
 
-  const withPnl = await attachLivePnl(positions);
+  const openEntities = await fetchOpenPositions(user.wallet_address);
+  const positions = await attachMarketData(openEntities);
 
-  let message = `📈 <b>Open Positions</b> (${withPnl.length})\n\n`;
-  const buttons: any[] = [];
+  let ethLine = "";
+  try {
+    const balance = await getWalletEthBalance(ANVIL_TEST_PRIVATE_KEY);
+    ethLine = `\n\n<b>Balance:</b> ${balance.eth.toFixed(4)} ETH / $${balance.usd.toFixed(2)}`;
+  } catch (error) {
+    console.error("Failed to fetch ETH balance:", error);
+  }
 
-  withPnl.forEach((pos) => {
-    message += formatPositionCard(pos) + `\n\n`;
-    buttons.push(positionButtons(pos));
-  });
+  const message = formatPositionsOverview(positions) + ethLine;
 
-  message += `━━━━━━━━━━━━━━━━━━\n<i>Prices update on refresh.</i>`;
+  const buttons: any[] = positions.map((pos) => [
+    Markup.button.callback(`❌ Close ${pos.asset}`, `close_position:${pos.name}`),
+  ]);
 
   buttons.push([Markup.button.callback("🔄 Refresh", "positions_refresh")]);
   buttons.push([Markup.button.callback("🔙 Back", "back")]);
@@ -162,21 +178,10 @@ export function registerPositionsHandler(bot: any) {
     }
   });
 
-  // STUB: closing a position for real means (1) executing the actual
-  // close on-chain via thirdweb/Anvil, and (2) calling resolveLesson()
-  // with the real final outcome_pct. Neither exists yet -- wiring both
-  // in is a one-line swap here once execute-trade + resolveLesson land.
   bot.action(/^close_position:(.+)$/, async (ctx: any) => {
     await ctx.answerCbQuery();
-    const positionId = ctx.match[1];
-
     await ctx.editMessageText(
-      `⚠️ Closing positions isn't wired up yet — this button is a placeholder.\n\n(Would close: ${positionId})`,
-      {
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback("🔙 Back to positions", "positions_refresh")],
-        ]),
-      },
+      "⚠️ Closing positions still needs the sell-swap function confirmed (see earlier note) — not wired up yet.",
     );
   });
 }

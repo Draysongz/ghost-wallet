@@ -40,6 +40,7 @@ registerStartHandler(bot);
 registerCreateWalletHandler(bot)
 registerRuleListHandler(bot)
 registerProposeTradeHandlers(bot)
+registerPositionsHandler(bot)
 
 
 

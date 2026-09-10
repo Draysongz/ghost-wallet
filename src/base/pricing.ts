@@ -27,16 +27,15 @@ export interface ResolvedToken {
   symbol: string;
   name: string;
   price_usd: number;
-  category_tags: string[]; // real CoinGecko categories, lowercased/slugified, plus our own liquidity tag
+  category_tags: string[];
   volume_24h_usd: number;
+  contract_address: string; // NEW — Base contract address, needed to actually execute a swap
 }
 
 
-async function resolveCoinId(
-  query: string
-): Promise<{ id: string; symbol: string; name: string; marketData: ReturnType<typeof parseMarketData> }> {
+async function resolveCoinId(query: string) {
   const searchResults = await cgFetch(`/search?query=${encodeURIComponent(query)}`);
-  const candidates = (searchResults?.coins ?? []).slice(0, 5); // check top 5 matches at most
+  const candidates = (searchResults?.coins ?? []).slice(0, 5);
 
   if (candidates.length === 0) {
     throw new Error(`No CoinGecko match found for "${query}"`);
@@ -47,12 +46,13 @@ async function resolveCoinId(
       `/coins/${candidate.id}?localization=false&tickers=false&community_data=false&developer_data=false`
     );
 
-    const hasBaseDeployment = Boolean(data?.platforms?.base);
-    if (hasBaseDeployment) {
+    const baseAddress = data?.platforms?.base;
+    if (baseAddress) {
       return {
         id: candidate.id,
         symbol: candidate.symbol,
         name: candidate.name,
+        contractAddress: baseAddress as string, // NEW
         marketData: parseMarketData(data),
       };
     }
@@ -61,6 +61,38 @@ async function resolveCoinId(
   throw new Error(
     `Found matches for "${query}", but none are confirmed deployed on Base. Try the contract address instead.`
   );
+}
+
+export async function resolveAndPriceToken(query: string): Promise<ResolvedToken> {
+  const { id, symbol, name, contractAddress, marketData } = await resolveCoinId(query);
+
+  return {
+    coingecko_id: id,
+    symbol,
+    name,
+    price_usd: marketData.price_usd,
+    category_tags: toCategoryTags(marketData.categories, marketData.volume_24h_usd),
+    volume_24h_usd: marketData.volume_24h_usd,
+    contract_address: contractAddress, // NEW
+  };
+}
+
+export async function resolveAndPriceTokenByContract(
+  contractAddress: string,
+  platformId: string = "base"
+): Promise<ResolvedToken> {
+  const data = await cgFetch(`/coins/${platformId}/contract/${contractAddress}`);
+  const { price_usd, categories, volume_24h_usd } = parseMarketData(data);
+
+  return {
+    coingecko_id: data.id,
+    symbol: data.symbol,
+    name: data.name,
+    price_usd,
+    category_tags: toCategoryTags(categories, volume_24h_usd),
+    volume_24h_usd,
+    contract_address: contractAddress, // NEW — already have it, was just never being returned
+  };
 }
 
 
@@ -89,36 +121,36 @@ function toCategoryTags(categories: string[], volume_24h_usd: number): string[] 
 }
 
 
-export async function resolveAndPriceToken(query: string): Promise<ResolvedToken> {
-  const { id, symbol, name, marketData } = await resolveCoinId(query);
+// export async function resolveAndPriceToken(query: string): Promise<ResolvedToken> {
+//   const { id, symbol, name, marketData } = await resolveCoinId(query);
 
-  return {
-    coingecko_id: id,
-    symbol,
-    name,
-    price_usd: marketData.price_usd,
-    category_tags: toCategoryTags(marketData.categories, marketData.volume_24h_usd),
-    volume_24h_usd: marketData.volume_24h_usd,
-  };
-}
+//   return {
+//     coingecko_id: id,
+//     symbol,
+//     name,
+//     price_usd: marketData.price_usd,
+//     category_tags: toCategoryTags(marketData.categories, marketData.volume_24h_usd),
+//     volume_24h_usd: marketData.volume_24h_usd,
+//   };
+// }
 
 
-export async function resolveAndPriceTokenByContract(
-  contractAddress: string,
-  platformId: string = "base"
-): Promise<ResolvedToken> {
-  const data = await cgFetch(`/coins/${platformId}/contract/${contractAddress}`);
-  const { price_usd, categories, volume_24h_usd } = parseMarketData(data);
+// export async function resolveAndPriceTokenByContract(
+//   contractAddress: string,
+//   platformId: string = "base"
+// ): Promise<ResolvedToken> {
+//   const data = await cgFetch(`/coins/${platformId}/contract/${contractAddress}`);
+//   const { price_usd, categories, volume_24h_usd } = parseMarketData(data);
 
-  return {
-    coingecko_id: data.id,
-    symbol: data.symbol,
-    name: data.name,
-    price_usd,
-    category_tags: toCategoryTags(categories, volume_24h_usd),
-    volume_24h_usd,
-  };
-}
+//   return {
+//     coingecko_id: data.id,
+//     symbol: data.symbol,
+//     name: data.name,
+//     price_usd,
+//     category_tags: toCategoryTags(categories, volume_24h_usd),
+//     volume_24h_usd,
+//   };
+// }
 
 
 export async function getCurrentPrice(coingeckoId: string): Promise<number> {
@@ -130,4 +162,39 @@ export async function getCurrentPrice(coingeckoId: string): Promise<number> {
   }
 
   return price;
+}
+
+
+export interface MarketSnapshot {
+  coingecko_id: string;
+  price_usd: number;
+  market_cap_usd: number;
+  price_change_pct_1h: number | null;
+  price_change_pct_24h: number | null;
+}
+
+// Batched lookup -- one API call for N tokens instead of N calls, which
+// matters once this runs against every open position on every dashboard
+// refresh. price_change_percentage needs both windows requested together.
+export async function getMarketSnapshot(coingeckoIds: string[]): Promise<Map<string, MarketSnapshot>> {
+  if (coingeckoIds.length === 0) return new Map();
+
+  const idsParam = coingeckoIds.join(",");
+  const data = await cgFetch(
+    `/coins/markets?vs_currency=usd&ids=${idsParam}&price_change_percentage=1h,24h`
+  );
+
+  const result = new Map<string, MarketSnapshot>();
+
+  for (const coin of data ?? []) {
+    result.set(coin.id, {
+      coingecko_id: coin.id,
+      price_usd: coin.current_price ?? 0,
+      market_cap_usd: coin.market_cap ?? 0,
+      price_change_pct_1h: coin.price_change_percentage_1h_in_currency ?? null,
+      price_change_pct_24h: coin.price_change_percentage_24h_in_currency ?? null,
+    });
+  }
+
+  return result;
 }
